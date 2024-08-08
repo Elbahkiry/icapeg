@@ -11,7 +11,6 @@ import (
 	"icapeg/logging"
 	"icapeg/service"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -140,7 +139,7 @@ func (i *ICAPRequest) RequestProcessing(xICAPMetadata string) {
 				} else {
 					i.req.OrgRequest = new
 				}
-				body, _ := ioutil.ReadAll(i.req.Request.Body)
+				body, _ := io.ReadAll(i.req.Request.Body)
 				i.req.OrgRequest.Body = io.NopCloser(bytes.NewBuffer(body))
 				i.req.OrgRequest.Header = i.req.Request.Header
 				i.req.OrgRequest.Header.Set(utils.ContentLength, strconv.Itoa(len(body)))
@@ -283,7 +282,7 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 			IcapStatusCode = utils.OkStatusCodeStr
 			if i.methodName == utils.ICAPModeReq {
 				IcapStatusCode = utils.OkStatusCodeStr
-				body, _ := ioutil.ReadAll(i.req.OrgRequest.Body)
+				body, _ := io.ReadAll(i.req.OrgRequest.Body)
 				i.req.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 				i.req.Request.Header.Set(utils.ContentLength, strconv.Itoa(len(body)))
 				defer i.req.Request.Body.Close()
@@ -438,12 +437,12 @@ func (i *ICAPRequest) shadowService(xICAPMetadata string) {
 	} else {
 		if i.req.Method == "REQMOD" {
 			i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Request, true)
-			tempBody, _ := ioutil.ReadAll(i.req.Request.Body)
+			tempBody, _ := io.ReadAll(i.req.Request.Body)
 			i.w.Write(tempBody)
 			i.req.Request.Body = io.NopCloser(bytes.NewBuffer(tempBody))
 		} else if i.req.Method == "RESPMOD" {
 			i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Response, true)
-			tempBody, _ := ioutil.ReadAll(i.req.Response.Body)
+			tempBody, _ := io.ReadAll(i.req.Response.Body)
 			i.w.Write(tempBody)
 			i.req.Response.Body = io.NopCloser(bytes.NewBuffer(tempBody))
 		}

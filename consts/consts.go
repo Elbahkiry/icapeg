@@ -15,7 +15,7 @@ const (
 
 // the common constants
 const (
-	Unknown                           = "unknown"
+	Unknown                           = "!"
 	Any                               = "*"
 	NoModificationStatusCodeStr       = 204
 	BadRequestStatusCodeStr           = 400

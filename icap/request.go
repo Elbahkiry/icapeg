@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -150,7 +149,7 @@ func ReadRequest(b *bufio.ReadWriter) (req *Request, err error) {
 	if hasBody {
 		if p := req.Header.Get("Preview"); p != "" {
 
-			req.Preview, err = ioutil.ReadAll(newChunkedReader(b))
+			req.Preview, err = io.ReadAll(newChunkedReader(b))
 			origBuf = b
 			origReader = bytes.NewBuffer(req.Preview)
 			req.EndIndicator = "0"
@@ -164,9 +163,9 @@ func ReadRequest(b *bufio.ReadWriter) (req *Request, err error) {
 				}
 			}
 			var r io.Reader = bytes.NewBuffer(req.Preview)
-			bodyReader = ioutil.NopCloser(r)
+			bodyReader = io.NopCloser(r)
 		} else {
-			bodyReader = ioutil.NopCloser(newChunkedReader(b))
+			bodyReader = io.NopCloser(newChunkedReader(b))
 		}
 	}
 

@@ -13,10 +13,10 @@ import (
 	"icapeg/service/services-utilities/ContentTypes"
 	"image"
 	"io"
-	"io/ioutil"
 	"mime"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -189,7 +189,7 @@ func (f *GeneralFunc) DecompressGzipBody(file *bytes.Buffer) (*bytes.Buffer, err
 	logging.Logger.Info(utils.PrepareLogMsg(f.xICAPMetadata, "decompressing the HTTP message body"))
 	reader, err := gzip.NewReader(file)
 	defer reader.Close()
-	result, err := ioutil.ReadAll(reader)
+	result, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +306,14 @@ func (f *GeneralFunc) GetFileName(serviceName string, xICAPMetadata string) stri
 	if len(filename) < 2 {
 		return "unnamed_file"
 	}
+	// Handle cases where the file extension is empty or just a dot
+	ext := filepath.Ext(filename)
+	if ext == "" || ext == "." {
+		filename = filename + "." + utils.Unknown
+		logging.Logger.Debug(utils.PrepareLogMsg(f.xICAPMetadata,
+			"File extension was empty or a dot, set to unknown: "+filename))
+	}
+	logging.Logger.Info(utils.PrepareLogMsg(f.xICAPMetadata, serviceName+" file name : "+filename))
 
 	return filename
 
