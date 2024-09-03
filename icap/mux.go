@@ -80,7 +80,7 @@ func (mux *ServeMux) ServeICAP(w ResponseWriter, r *Request) {
 	// Clean path to canonical form and redirect.
 	if p := cleanPath(r.URL.Path); p != r.URL.Path {
 		w.Header().Set("Location", p)
-		w.WriteHeader(http.StatusMovedPermanently, nil, false)
+		w.WriteHeader(http.StatusMovedPermanently, nil, false, r)
 		return
 	}
 	// Host-specific pattern takes precedence over generic ones
@@ -129,11 +129,11 @@ func HandleFunc(pattern string, handler func(ResponseWriter, *Request)) {
 
 // NotFound replies to the request with an HTTP 404 not found error.
 func NotFound(w ResponseWriter, r *Request) {
-	w.WriteHeader(http.StatusNotFound, nil, false)
+	w.WriteHeader(http.StatusNotFound, nil, false, nil)
 }
 
 // NotFoundHandler returns a simple request handler
-// that replies to each request with a ``404 page not found'' reply.
+// that replies to each request with a “404 page not found” reply.
 func NotFoundHandler() Handler { return HandlerFunc(NotFound) }
 
 // Redirect to a fixed URL
@@ -189,5 +189,5 @@ func Redirect(w ResponseWriter, r *Request, redirectURL string, code int) {
 	}
 
 	w.Header().Set("Location", redirectURL)
-	w.WriteHeader(code, nil, false)
+	w.WriteHeader(code, nil, false, r)
 }

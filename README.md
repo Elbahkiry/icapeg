@@ -98,13 +98,13 @@ You should see something like, ```ICAP server is running on localhost:1344 ...``
 - **echo**
 > simply it's like when you bing url,so what we send will be received 
 
-- ## clamav**
+- ## **clamav**
 > ClamAV is an open source (GPLv2) anti-virus toolkit, designed especially for e-mail scanning on mail gateways. It provides a number of utilities including a flexible and scalable multi-threaded daemon also helps to scan file quickly.
 
-- ## clhashlookup**
-> simply it helps to scan each file we need to check before we send to Api.
+- ## **clhashlookup**
+> simply it helps to scan each file we need to check before we send to API.
 
-- ## hashlocal**
+- ## **hashlocal**
 >  we will pretend that you want to download a file. Still, you don't know if it is safe or not, so     using this service helps you calculate the hash value of any file you download through the icapeg, then it checks if this hash value is available or not in hash_file if it is in the hash_file returns back an exception page, so if you tried to downloadany file of eicar test vrius it will appear an exception page,cause the hash file of thosefile is foun in our hash_file.
 
 
@@ -131,6 +131,8 @@ You should see something like, ```ICAP server is running on localhost:1344 ...``
         port = 1344
         services= ["echo", "virustotal", "clamav", "cloudmersive"]
         debugging_headers=true
+        max_file_size_on_memory = 10 # in megabytes
+        write_path_on_disk = "./tmp"
         ```
         
         - **port**
@@ -153,7 +155,13 @@ You should see something like, ```ICAP server is running on localhost:1344 ...``
           - **false**: Debugging headers should not be displayed with ICAP headers.
         
           - Any port number that isn't used in your machine.
+        - **max_file_size_on_memory** (MB)
 
+          The maximum file size in megabytes that will be handled in memory. Files exceeding this size will be stored and processed on disk. The default value is `10` MB.
+
+        - **write_path_on_disk**
+
+          The directory path where files exceeding `max_file_size_on_memory` will be stored on disk. The default path is `"./tmp"`.
       ## echo
 
       - **[echo] section** 
@@ -407,7 +415,7 @@ You should see something like, ```ICAP server is running on localhost:1344 ...``
         http_exception_has_body = true
         exception_page = "./temp/exception-page.html" # Location of the exception page for this service
         ```
-      - ### **New used variables **
+      - ### **New used variables**
 
        - **socket_path**
        It is a string variable it helps sending the HTTP msg body to the ClamAV through antivirus socket.

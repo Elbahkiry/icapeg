@@ -34,7 +34,7 @@ const (
 	ProcessExts                       = "process"
 	RejectExts                        = "reject"
 	BypassExts                        = "bypass"
-	BlockPagePath                     = "block-page.html"
+	BlockPagePath                     = "temp/exception-page.html"
 	ErrPageReasonFileRejected         = "fileRejected"
 	ErrPageReasonMaxFileExceeded      = "maxFileSizeExceeded"
 	ErrPageReasonFileIsNotSafe        = "fileIsNotSafe"

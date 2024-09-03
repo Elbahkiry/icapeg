@@ -41,7 +41,7 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 
 	//if the http method is Connect, return the request as it is because it has no body
 	if e.httpMsg.Request.Method == http.MethodConnect {
-		return utils.OkStatusCodeStr, e.generalFunc.ReturningHttpMessageWithFile(e.methodName, file.Bytes()),
+		return utils.OkStatusCodeStr, e.generalFunc.ReturningHttpMessageWithFile(e.methodName, file),
 			serviceHeaders, msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
 	}
 
@@ -61,14 +61,14 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 	if len(contentType) == 0 {
 		contentType = append(contentType, "")
 	}
-	fileExtension := e.generalFunc.GetMimeExtension(file.Bytes(), contentType[0], fileName)
-	fileSize := fmt.Sprintf("%v kb", file.Len()/1000)
+	fileExtension := e.generalFunc.GetMimeExtension(file, contentType[0], fileName)
+	fileSize := fmt.Sprintf("%v kb", len(file)/1000)
 
 	//check if the file extension is a bypass extension
 	//if yes we will not modify the file, and we will return 204 No modifications
 	isProcess, icapStatus, httpMsg := e.generalFunc.CheckTheExtension(fileExtension, e.extArrs,
 		e.processExts, e.rejectExts, e.bypassExts, e.return400IfFileExtRejected, isGzip,
-		e.serviceName, e.methodName, EchoIdentifier, e.httpMsg.Request.RequestURI, reqContentType, file, utils.BlockPagePath, fileSize)
+		e.serviceName, e.methodName, EchoIdentifier, e.httpMsg.Request.RequestURI, reqContentType, bytes.NewBuffer(file), utils.BlockPagePath, fileSize)
 	if !isProcess {
 		logging.Logger.Info(utils.PrepareLogMsg(e.xICAPMetadata, e.serviceName+" service has stopped processing"))
 		msgHeadersAfterProcessing = e.generalFunc.LogHTTPMsgHeaders(e.methodName)
@@ -78,8 +78,8 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 
 	//check if the file size is greater than max file size of the service
 	//if yes we will return 200 ok or 204 no modification, it depends on the configuration of the service
-	if e.maxFileSize != 0 && e.maxFileSize < file.Len() {
-		status, file, httpMsgAfter := e.generalFunc.IfMaxFileSizeExc(e.returnOrigIfMaxSizeExc, e.serviceName, e.methodName, file, e.maxFileSize, utils.BlockPagePath, fileSize)
+	if e.maxFileSize != 0 && e.maxFileSize < len(file) {
+		status, file, httpMsgAfter := e.generalFunc.IfMaxFileSizeExc(e.returnOrigIfMaxSizeExc, e.serviceName, e.methodName, bytes.NewBuffer(file), e.maxFileSize, utils.BlockPagePath, fileSize)
 		fileAfterPrep, httpMsgAfter := e.generalFunc.IfStatusIs204WithFile(e.methodName, status, file, isGzip, reqContentType, httpMsgAfter, true)
 		if fileAfterPrep == nil && httpMsgAfter == nil {
 			logging.Logger.Info(utils.PrepareLogMsg(e.xICAPMetadata, e.serviceName+" service has stopped processing"))
@@ -103,7 +103,7 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 		return status, nil, nil, msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
 	}
 
-	scannedFile := file.Bytes()
+	scannedFile := file
 
 	//returning the scanned file if everything is ok
 	scannedFile = e.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, e.methodName)

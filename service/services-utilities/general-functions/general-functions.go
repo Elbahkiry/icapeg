@@ -52,9 +52,9 @@ func NewGeneralFunc(httpMsg *http_message.HttpMsg, xICAPMetadata string) *Genera
 }
 
 // CopyingFileToTheBuffer is a func which used for extracting a file from the body of the http message
-func (f *GeneralFunc) CopyingFileToTheBuffer(methodName string) (*bytes.Buffer, ContentTypes.ContentType, error) {
+func (f *GeneralFunc) CopyingFileToTheBuffer(methodName string) ([]byte, ContentTypes.ContentType, error) {
 	logging.Logger.Info(utils.PrepareLogMsg(f.xICAPMetadata, "extracting the body of HTTP message"))
-	file := &bytes.Buffer{}
+	var file []byte
 	var err error
 	var reqContentType ContentTypes.ContentType
 	reqContentType = nil
@@ -63,7 +63,9 @@ func (f *GeneralFunc) CopyingFileToTheBuffer(methodName string) (*bytes.Buffer, 
 		file, reqContentType, err = f.copyingFileToTheBufferReq()
 		break
 	case utils.ICAPModeResp:
-		file, err = f.copyingFileToTheBufferResp()
+		// file, err = f.copyingFileToTheBufferResp()
+		// no need we will get file form storgeclient
+
 		break
 	}
 	if err != nil {
@@ -92,7 +94,8 @@ func (f *GeneralFunc) CheckTheExtension(fileExtension string, extArrs []services
 				if methodName == "RESPMOD" {
 					errPage := f.GenHtmlPage(BlockPagePath, utils.ErrPageReasonFileRejected, serviceName, identifier, requestURI, fileSize, f.xICAPMetadata)
 					f.httpMsg.Response = f.ErrPageResp(http.StatusForbidden, errPage.Len())
-					f.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(errPage.Bytes()))
+					// f.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(errPage.Bytes()))
+					f.httpMsg.StorageClient.Save(f.httpMsg.StorageKey, errPage.Bytes())
 					return false, utils.OkStatusCodeStr, f.httpMsg.Response
 				} else {
 					htmlPage, req, err := f.ReqModErrPage(utils.ErrPageReasonFileRejected, serviceName, "-", fileSize)
@@ -111,22 +114,23 @@ func (f *GeneralFunc) CheckTheExtension(fileExtension string, extArrs []services
 		} else if extArrs[i].Name == utils.BypassExts {
 			if f.ifFileExtIsX(fileExtension, bypassExts) {
 				logging.Logger.Debug(utils.PrepareLogMsg(f.xICAPMetadata, "extension is bypass"))
-				fileAfterPrep, httpMsg := f.IfICAPStatusIs204(methodName, utils.NoModificationStatusCodeStr,
-					file, isGzip, reqContentType, f.httpMsg)
-				if fileAfterPrep == nil && httpMsg == nil {
-					return false, utils.InternalServerErrStatusCodeStr, nil
-				}
-
-				//returning the http message and the ICAP status code
-				switch msg := httpMsg.(type) {
-				case *http.Request:
-					msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
-					return false, utils.NoModificationStatusCodeStr, msg
-				case *http.Response:
-					msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
-					return false, utils.NoModificationStatusCodeStr, msg
-				}
 				return false, utils.NoModificationStatusCodeStr, nil
+				// fileAfterPrep, httpMsg := f.IfICAPStatusIs204(methodName, utils.NoModificationStatusCodeStr,
+				// 	file, isGzip, reqContentType, f.httpMsg)
+				// if fileAfterPrep == nil && httpMsg == nil {
+				// 	return false, utils.InternalServerErrStatusCodeStr, nil
+				// }
+
+				// //returning the http message and the ICAP status code
+				// switch msg := httpMsg.(type) {
+				// case *http.Request:
+				// 	msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
+				// 	return false, utils.NoModificationStatusCodeStr, msg
+				// case *http.Response:
+				// 	msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
+				// 	return false, utils.NoModificationStatusCodeStr, msg
+				// }
+				// return false, utils.NoModificationStatusCodeStr, nil
 			}
 		}
 	}
@@ -135,19 +139,22 @@ func (f *GeneralFunc) CheckTheExtension(fileExtension string, extArrs []services
 
 // copyingFileToTheBufferResp is a utility function for CopyingFileToTheBuffer func
 // it's used for extracting a file from the body of the http response
-func (f *GeneralFunc) copyingFileToTheBufferResp() (*bytes.Buffer, error) {
-	file := &bytes.Buffer{}
-	_, err := io.Copy(file, f.httpMsg.Response.Body)
-	return file, err
+func (f *GeneralFunc) copyingFileToTheBufferResp() ([]byte, error) {
+	// _, err := io.Copy(file, f.httpMsg.Response.Body)
+	file, err := f.httpMsg.StorageClient.Load(f.httpMsg.StorageKey)
+	if err != nil {
+		return file, err
+	}
+	return file, nil
 }
 
 // copyingFileToTheBufferReq is a utility function for CopyingFileToTheBuffer func
 // it's used for extracting a file from the body of the http request
-func (f *GeneralFunc) copyingFileToTheBufferReq() (*bytes.Buffer, ContentTypes.ContentType, error) {
+func (f *GeneralFunc) copyingFileToTheBufferReq() ([]byte, ContentTypes.ContentType, error) {
 	reqContentType := ContentTypes.GetContentType(f.httpMsg.Request)
 	// getting the file from request and store it in buf as a type of bytes.Buffer
 	file := reqContentType.GetFileFromRequest()
-	return file, reqContentType, nil
+	return file.Bytes(), reqContentType, nil
 
 }
 
@@ -419,8 +426,10 @@ func (f *GeneralFunc) ReturningHttpMessageWithFile(methodName string, file []byt
 		}
 		return f.httpMsg.Request
 	case utils.ICAPModeResp:
-		f.httpMsg.Response.Header.Set(utils.ContentLength, strconv.Itoa(len(string(file))))
-		f.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(file))
+		size, _ := f.httpMsg.StorageClient.Size(f.httpMsg.StorageKey)
+		f.httpMsg.Response.Header.Set(utils.ContentLength, strconv.Itoa(int(size)))
+		//f.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(file))
+		//f.httpMsg.StorageClient.Save(f.httpMsg.StorageKey, file)
 		return f.httpMsg.Response
 	}
 	return nil
@@ -459,7 +468,8 @@ func (f *GeneralFunc) returningHttpMessage(methodName string, file []byte) inter
 		return f.httpMsg.Request
 	case utils.ICAPModeResp:
 		f.httpMsg.Response.Header.Set(utils.ContentLength, strconv.Itoa(len(string(file))))
-		f.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(file))
+		// f.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(file))
+		f.httpMsg.StorageClient.Save(f.httpMsg.StorageKey, file)
 		return f.httpMsg.Response
 	}
 	return nil

@@ -2,21 +2,26 @@ package http_message
 
 import (
 	"icapeg/logging"
+	"icapeg/storage"
 	"net/http"
 )
 
 // HttpMsg is a struct used for encapsulating http message (http request, http response)
 // to facilitate passing them together throw functions
 type HttpMsg struct {
-	Request  *http.Request
-	Response *http.Response
+	Request       *http.Request
+	Response      *http.Response
+	StorageClient storage.StorageClient
+	StorageKey    string
 }
 
 // NewHttpMsg is a func used for creating an instance from HttpMsg struct
-func (h *HttpMsg) NewHttpMsg(Request *http.Request, Response *http.Response) *HttpMsg {
+func (h *HttpMsg) NewHttpMsg(Request *http.Request, Response *http.Response, StorageClient storage.StorageClient, StorageKey string) *HttpMsg {
 	logging.Logger.Debug("creating instance from HttpMsg struct")
 	return &HttpMsg{
-		Request:  Request,
-		Response: Response,
+		Request:       Request,
+		Response:      Response,
+		StorageClient: StorageClient,
+		StorageKey:    StorageKey,
 	}
 }

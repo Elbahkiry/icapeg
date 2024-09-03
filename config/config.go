@@ -22,16 +22,18 @@ type serviceIcapInfo struct {
 
 // AppConfig represents the app configuration
 type AppConfig struct {
-	Port               int
-	LogLevel           string
-	WriteLogsToConsole bool
-	BypassExtensions   []string
-	ProcessExtensions  []string
-	PreviewBytes       string
-	PreviewEnabled     bool
-	DebuggingHeaders   bool
-	Services           []string
-	ServicesInstances  map[string]*serviceIcapInfo
+	Port                int
+	LogLevel            string
+	WriteLogsToConsole  bool
+	BypassExtensions    []string
+	ProcessExtensions   []string
+	PreviewBytes        string
+	PreviewEnabled      bool
+	DebuggingHeaders    bool
+	Services            []string
+	ServicesInstances   map[string]*serviceIcapInfo
+	MaxFileSizeOnMemory int
+	WritePathOnDisk     string
 }
 
 var AppCfg AppConfig
@@ -48,11 +50,13 @@ func Init() {
 		fmt.Println("app section doesn't exist in config file")
 	}
 	AppCfg = AppConfig{
-		Port:               readValues.ReadValuesInt("app.port"),
-		LogLevel:           readValues.ReadValuesString("app.log_level"),
-		WriteLogsToConsole: readValues.ReadValuesBool("app.write_logs_to_console"),
-		DebuggingHeaders:   readValues.ReadValuesBool("app.debugging_headers"),
-		Services:           readValues.ReadValuesSlice("app.services"),
+		Port:                readValues.ReadValuesInt("app.port"),
+		LogLevel:            readValues.ReadValuesString("app.log_level"),
+		WriteLogsToConsole:  readValues.ReadValuesBool("app.write_logs_to_console"),
+		DebuggingHeaders:    readValues.ReadValuesBool("app.debugging_headers"),
+		Services:            readValues.ReadValuesSlice("app.services"),
+		MaxFileSizeOnMemory: readValues.ReadValuesInt("app.max_file_size_on_memory"),
+		WritePathOnDisk:     readValues.ReadValuesString("app.write_path_on_disk"),
 	}
 	logging.InitializeLogger(AppCfg.LogLevel, AppCfg.WriteLogsToConsole)
 	logging.Logger.Info("Reading config.toml file")

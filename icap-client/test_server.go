@@ -70,12 +70,12 @@ func respmodHandler(w icap.ResponseWriter, req *icap.Request) {
 			h.Set("Preview", strconv.Itoa(previewBytes))
 		}
 		h.Set("Transfer-Preview", "*")
-		w.WriteHeader(http.StatusOK, nil, false)
+		w.WriteHeader(http.StatusOK, nil, false, nil)
 	case "RESPMOD":
 		defer req.Response.Body.Close()
 
 		if val, exist := req.Header["Allow"]; !exist || (len(val) > 0 && val[0] != "204") {
-			w.WriteHeader(http.StatusNoContent, nil, false)
+			w.WriteHeader(http.StatusNoContent, nil, false, nil)
 			return
 		}
 
@@ -85,7 +85,7 @@ func respmodHandler(w icap.ResponseWriter, req *icap.Request) {
 
 		if _, err := io.Copy(buf, req.Response.Body); err != nil {
 			log.Println("Failed to copy the response body to buffer: ", err.Error())
-			w.WriteHeader(http.StatusNoContent, nil, false)
+			w.WriteHeader(http.StatusNoContent, nil, false, nil)
 			return
 		}
 
@@ -98,7 +98,7 @@ func respmodHandler(w icap.ResponseWriter, req *icap.Request) {
 			status = http.StatusOK
 		}
 
-		w.WriteHeader(status, nil, false)
+		w.WriteHeader(status, nil, false, nil)
 
 	}
 }
@@ -116,11 +116,11 @@ func reqmodHandler(w icap.ResponseWriter, req *icap.Request) {
 			h.Set("Preview", strconv.Itoa(previewBytes))
 		}
 		h.Set("Transfer-Preview", "*")
-		w.WriteHeader(http.StatusOK, nil, false)
+		w.WriteHeader(http.StatusOK, nil, false, nil)
 	case "REQMOD":
 
 		if val, exist := req.Header["Allow"]; !exist || (len(val) > 0 && val[0] != "204") {
-			w.WriteHeader(http.StatusNoContent, nil, false)
+			w.WriteHeader(http.StatusNoContent, nil, false, nil)
 			return
 		}
 
@@ -137,7 +137,7 @@ func reqmodHandler(w icap.ResponseWriter, req *icap.Request) {
 			status = http.StatusOK
 		}
 
-		w.WriteHeader(status, nil, false)
+		w.WriteHeader(status, nil, false, nil)
 
 	}
 }

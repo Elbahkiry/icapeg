@@ -38,7 +38,7 @@ type ResponseWriter interface {
 	// Then it sends an HTTP header if httpMessage is not nil.
 	// httpMessage may be an *http.Request or an *http.Response.
 	// hasBody should be true if there will be calls to Write(), generating a message body.
-	WriteHeader(code int, httpMessage interface{}, hasBody bool)
+	WriteHeader(code int, httpMessage interface{}, hasBody bool, req *Request)
 }
 
 type respWriter struct {
@@ -56,7 +56,7 @@ func (w *respWriter) Header() http.Header {
 
 func (w *respWriter) Write(p []byte) (n int, err error) {
 	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK, nil, true)
+		w.WriteHeader(http.StatusOK, nil, true, w.req)
 	}
 
 	if w.cw == nil {
@@ -71,7 +71,7 @@ func (w *respWriter) WriteRaw(p string) {
 	w.wroteRaw = true
 }
 
-func (w *respWriter) WriteHeader(code int, httpMessage interface{}, hasBody bool) {
+func (w *respWriter) WriteHeader(code int, httpMessage interface{}, hasBody bool, req *Request) {
 	if w.wroteHeader {
 		log.Println("Called WriteHeader twice on the same connection")
 		return
@@ -145,8 +145,15 @@ func (w *respWriter) WriteHeader(code int, httpMessage interface{}, hasBody bool
 	if hasBody {
 		switch msg := httpMessage.(type) {
 		case *http.Response:
-			requestBody, _ := io.ReadAll(msg.Body)
-			w.Write(requestBody)
+			if req != nil {
+				requestBody, _ := req.StorageClient.Load(req.StorageKey)
+				w.Write(requestBody)
+				req.StorageClient.Delete(req.StorageKey)
+
+			} else {
+				requestBody, _ := io.ReadAll(msg.Body)
+				w.Write(requestBody)
+			}
 		case *http.Request:
 			requestBody, _ := io.ReadAll(msg.Body)
 			w.Write(requestBody)
@@ -158,7 +165,7 @@ func (w *respWriter) WriteHeader(code int, httpMessage interface{}, hasBody bool
 
 func (w *respWriter) finishRequest() {
 	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK, nil, false)
+		w.WriteHeader(http.StatusOK, nil, false, w.req)
 	}
 
 	if w.cw != nil && !w.wroteRaw {
@@ -168,6 +175,9 @@ func (w *respWriter) finishRequest() {
 	}
 
 	w.conn.buf.Flush()
+	if w.req != nil && w.req.StorageClient != nil {
+		w.req.StorageClient.Delete(w.req.StorageKey)
+	}
 }
 
 // httpRequestHeader returns the headers for an HTTP request
