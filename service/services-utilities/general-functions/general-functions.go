@@ -261,6 +261,8 @@ func (f *GeneralFunc) IfMaxFileSizeExc(returnOrigIfMaxSizeExc bool, serviceName,
 			htmlErrPage := f.GenHtmlPage(BlockPagePath,
 				utils.ErrPageReasonMaxFileExceeded, serviceName, "-", f.httpMsg.Request.RequestURI, fileSize, f.xICAPMetadata)
 			f.httpMsg.Response = f.ErrPageResp(http.StatusForbidden, htmlErrPage.Len())
+			// Save the block page to the response
+			f.httpMsg.StorageClient.Save(f.httpMsg.StorageKey, htmlErrPage.Bytes())
 			return utils.OkStatusCodeStr, htmlErrPage, f.httpMsg.Response
 		} else {
 			htmlPage, req, err := f.ReqModErrPage(utils.ErrPageReasonMaxFileExceeded, serviceName, "-", fileSize)
