@@ -223,7 +223,9 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 	//icap.Request.Response
 	IcapStatusCode, httpMsg, serviceHeaders, httpMshHeadersBeforeProcessing, httpMshHeadersAfterProcessing,
 		vendorMsgs := requiredService.Processing(partial, i.req.Header)
-	defer i.req.StorageClient.Delete(i.req.StorageKey) // Delete the file in the tmp directory after processing(useful when error happens)
+	if i.methodName == utils.ICAPModeResp {
+		defer i.req.StorageClient.Delete(i.req.StorageKey) // Delete the file in the tmp directory after processing(useful when error happens)
+	}
 
 	// adding the headers which the service wants to add them in the ICAP response
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
