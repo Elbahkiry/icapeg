@@ -67,15 +67,15 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 
 	//check if the file extension is a bypass extension
 	//if yes we will not modify the file, and we will return 204 No modifications
-	isProcess, _, _ := e.generalFunc.CheckTheExtension(fileExtension, e.extArrs,
+	isProcess, icapStatus, httpMsg := e.generalFunc.CheckTheExtension(fileExtension, e.extArrs,
 		e.processExts, e.rejectExts, e.bypassExts, e.return400IfFileExtRejected, isGzip,
 		e.serviceName, e.methodName, EchoIdentifier, e.httpMsg.Request.RequestURI, reqContentType, bytes.NewBuffer(file), utils.BlockPagePath, fileSize)
-	// if !isProcess {
-	// 	logging.Logger.Info(utils.PrepareLogMsg(e.xICAPMetadata, e.serviceName+" service has stopped processing"))
-	// 	msgHeadersAfterProcessing = e.generalFunc.LogHTTPMsgHeaders(e.methodName)
-	// 	return icapStatus, httpMsg, serviceHeaders, msgHeadersBeforeProcessing,
-	// 		msgHeadersAfterProcessing, vendorMsgs
-	// }
+	if !isProcess && e.methodName == utils.ICAPModeReq {
+		logging.Logger.Info(utils.PrepareLogMsg(e.xICAPMetadata, e.serviceName+" service has stopped processing"))
+		msgHeadersAfterProcessing = e.generalFunc.LogHTTPMsgHeaders(e.methodName)
+		return icapStatus, httpMsg, serviceHeaders, msgHeadersBeforeProcessing,
+			msgHeadersAfterProcessing, vendorMsgs
+	}
 
 	//check if the file size is greater than max file size of the service
 	//if yes we will return 200 ok or 204 no modification, it depends on the configuration of the service
