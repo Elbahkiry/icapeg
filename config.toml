@@ -25,6 +25,8 @@ services= ["echo", "clhashlookup", "clamav","hashlocal"]
 debugging_headers=true
 web_server_host = "$_WEB_SERVER_HOST" #Example: "localhost:8081" , replace localhost with the ICAP server IP address.
 web_server_endpoint = "/service/message"  
+max_file_size_on_memory = 1  # megabytes
+write_path_on_disk="./tmp"
 
 [echo]
 vendor = "echo"

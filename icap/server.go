@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"icapeg/config"
+	"icapeg/storage"
 	"log"
 	"net"
 	"net/http"
@@ -69,6 +71,9 @@ func (c *conn) readRequest() (w *respWriter, err error) {
 	}
 	if req == nil {
 		req = new(Request)
+		if req.StorageClient == nil {
+			req.StorageClient = storage.NewAutoStorage(int64(config.App().MaxFileSizeOnMemory), config.App().WritePathOnDisk) // 1<<20 1 MB max memory size, disk storage path "/tmp"
+		}
 	} else {
 		req.RemoteAddr = c.remoteAddr
 	}

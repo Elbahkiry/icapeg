@@ -15,7 +15,7 @@ const (
 
 // the common constants
 const (
-	Unknown                           = "unknown"
+	Unknown                           = "!"
 	Any                               = "*"
 	NoModificationStatusCodeStr       = 204
 	BadRequestStatusCodeStr           = 400
@@ -34,7 +34,7 @@ const (
 	ProcessExts                       = "process"
 	RejectExts                        = "reject"
 	BypassExts                        = "bypass"
-	BlockPagePath                     = "block-page.html"
+	BlockPagePath                     = "temp/exception-page.html"
 	ErrPageReasonFileRejected         = "fileRejected"
 	ErrPageReasonMaxFileExceeded      = "maxFileSizeExceeded"
 	ErrPageReasonFileIsNotSafe        = "fileIsNotSafe"

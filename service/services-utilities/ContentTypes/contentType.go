@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strings"
 )
@@ -28,7 +27,7 @@ func GetContentType(req *http.Request) ContentType {
 		//first is that file encoded in base64 and second is that file is actually a JSON file,
 		//so we convert the JSON file to a map
 		var data map[string]interface{}
-		body, _ := ioutil.ReadAll(req.Body)
+		body, _ := io.ReadAll(req.Body)
 		_ = json.Unmarshal(body, &data)
 
 		//checking if there is key equals "Base64", the file would be encoded

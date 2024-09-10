@@ -2,7 +2,7 @@ package icapclient
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -23,7 +23,7 @@ func (r *Request) SetPreview(maxBytes int) error {
 		}
 		if r.HTTPRequest.Body != nil {
 			var err error
-			bodyBytes, err = ioutil.ReadAll(r.HTTPRequest.Body)
+			bodyBytes, err = io.ReadAll(r.HTTPRequest.Body)
 
 			if err != nil {
 				return err
@@ -40,7 +40,7 @@ func (r *Request) SetPreview(maxBytes int) error {
 
 		if r.HTTPResponse.Body != nil {
 			var err error
-			bodyBytes, err = ioutil.ReadAll(r.HTTPResponse.Body)
+			bodyBytes, err = io.ReadAll(r.HTTPResponse.Body)
 
 			if err != nil {
 				return err
@@ -65,11 +65,11 @@ func (r *Request) SetPreview(maxBytes int) error {
 	// returning the body back to the http message depending on the request method
 
 	if r.Method == MethodREQMOD {
-		r.HTTPRequest.Body = ioutil.NopCloser(bytes.NewReader(bodyBytes))
+		r.HTTPRequest.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 
 	if r.Method == MethodRESPMOD {
-		r.HTTPResponse.Body = ioutil.NopCloser(bytes.NewReader(bodyBytes))
+		r.HTTPResponse.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 
 	// finally assinging the preview informations including setting the header

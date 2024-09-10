@@ -37,6 +37,10 @@ type Hashlookup struct {
 	CaseBlockHttpBody          bool
 	ExceptionPage              string
 	IcapHeaders                textproto.MIMEHeader
+	serviceHeaders             map[string]string
+	msgHeadersBeforeProcessing map[string]interface{}
+	msgHeadersAfterProcessing  map[string]interface{}
+	vendorMsgs                 map[string]interface{}
 }
 
 func InitHashlookupConfig(serviceName string) {

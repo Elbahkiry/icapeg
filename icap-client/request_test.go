@@ -3,7 +3,7 @@ package icapclient
 import (
 	"bytes"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -198,7 +198,7 @@ func TestRequest(t *testing.T) {
 				"Content-Length": []string{"11"},
 			},
 			ContentLength: 11,
-			Body:          ioutil.NopCloser(strings.NewReader("Hello World")),
+			Body:          io.NopCloser(strings.NewReader("Hello World")),
 		}
 
 		req, _ := NewRequest(MethodRESPMOD, "icap://localhost:1344/something", httpReq, httpResp)
@@ -392,7 +392,7 @@ func TestRequest(t *testing.T) {
 						"Content-Length": []string{strconv.Itoa(bodyData.Len())},
 					},
 					ContentLength: int64(bodyData.Len()),
-					Body:          ioutil.NopCloser(strings.NewReader(sample.bodyStr)),
+					Body:          io.NopCloser(strings.NewReader(sample.bodyStr)),
 				}
 				req, _ = NewRequest(sample.reqMethod, "icap://localhost:1344/something", httpReq, httpResp)
 			}
@@ -409,11 +409,11 @@ func TestRequest(t *testing.T) {
 			var bdyBytes []byte
 
 			if sample.reqMethod == MethodREQMOD {
-				bdyBytes, _ = ioutil.ReadAll(req.HTTPRequest.Body)
+				bdyBytes, _ = io.ReadAll(req.HTTPRequest.Body)
 			}
 
 			if sample.reqMethod == MethodRESPMOD {
-				bdyBytes, _ = ioutil.ReadAll(req.HTTPResponse.Body)
+				bdyBytes, _ = io.ReadAll(req.HTTPResponse.Body)
 			}
 
 			if string(bdyBytes) != sample.bodyStr {

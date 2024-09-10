@@ -11,13 +11,16 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"icapeg/config"
+	"icapeg/storage"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type badStringError struct {
@@ -40,12 +43,13 @@ type Request struct {
 	EndIndicator string
 	OrgRequest   *http.Request
 	// The HTTP messages.
-	Request  *http.Request
-	Response *http.Response
+	Request       *http.Request
+	Response      *http.Response
+	OrigBuf       *bufio.ReadWriter
+	OrigReader    io.Reader
+	StorageClient storage.StorageClient
+	StorageKey    string
 }
-
-var origBuf *bufio.ReadWriter
-var origReader io.Reader
 
 // ReadRequest reads and parses a request from b.
 func ReadRequest(b *bufio.ReadWriter) (req *Request, err error) {
@@ -147,12 +151,13 @@ func ReadRequest(b *bufio.ReadWriter) (req *Request, err error) {
 	}
 
 	var bodyReader io.ReadCloser = emptyReader(0)
+	defer bodyReader.Close()
 	if hasBody {
 		if p := req.Header.Get("Preview"); p != "" {
 
-			req.Preview, err = ioutil.ReadAll(newChunkedReader(b))
-			origBuf = b
-			origReader = bytes.NewBuffer(req.Preview)
+			req.Preview, err = io.ReadAll(newChunkedReader(b))
+			req.OrigBuf = b
+			req.OrigReader = bytes.NewBuffer(req.Preview)
 			req.EndIndicator = "0"
 			if err != nil {
 				if strings.Contains(err.Error(), "ieof") {
@@ -164,9 +169,9 @@ func ReadRequest(b *bufio.ReadWriter) (req *Request, err error) {
 				}
 			}
 			var r io.Reader = bytes.NewBuffer(req.Preview)
-			bodyReader = ioutil.NopCloser(r)
+			bodyReader = io.NopCloser(r)
 		} else {
-			bodyReader = ioutil.NopCloser(newChunkedReader(b))
+			bodyReader = io.NopCloser(newChunkedReader(b))
 		}
 	}
 
@@ -214,9 +219,15 @@ func ReadRequest(b *bufio.ReadWriter) (req *Request, err error) {
 		}
 
 		if req.Method == "RESPMOD" {
-			req.Response.Body = bodyReader
+			// req.Response.Body = bodyReader
+			if req.StorageClient == nil {
+				req.StorageClient = storage.NewAutoStorage(int64(config.App().MaxFileSizeOnMemory), config.App().WritePathOnDisk) // 1<<20 1 MB max memory size, disk storage path "/tmp"
+			}
+			req.SaveResponseBody(bodyReader)
 		} else {
-			req.Response.Body = emptyReader(0)
+			// req.Response.Body = emptyReader(0)
+			req.SaveResponseBody(emptyReader(0))
+
 		}
 	}
 
@@ -257,6 +268,24 @@ func (c *continueReader) Read(p []byte) (n int, err error) {
 	return c.cr.Read(p)
 }
 
-func GetTheRest() io.Reader {
-	return io.MultiReader(origReader, &continueReader{buf: origBuf})
+func (req *Request) GetTheRest() io.Reader {
+	return io.MultiReader(req.OrigReader, &continueReader{buf: req.OrigBuf})
+}
+func (r *Request) SaveResponseBody(reqBody io.ReadCloser) error {
+	body, err := io.ReadAll(reqBody)
+	if err != nil {
+		return err
+	}
+	defer reqBody.Close()
+
+	r.StorageKey = generateStorageKey()
+	return r.StorageClient.Save(r.StorageKey, body)
+}
+
+func (r *Request) LoadResponseBody() ([]byte, error) {
+	return r.StorageClient.Load(r.StorageKey)
+}
+
+func generateStorageKey() string {
+	return uuid.New().String()
 }

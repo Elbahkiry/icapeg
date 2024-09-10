@@ -11,7 +11,7 @@ import (
 	"icapeg/logging"
 	"icapeg/service"
 	"io"
-	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -63,7 +63,7 @@ func (i *ICAPRequest) RequestInitialization() (string, error) {
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata, "checking if the service doesn't exist in toml file"))
 	i.serviceName = i.req.URL.Path[1:len(i.req.URL.Path)]
 	if !i.isServiceExists(xICAPMetadata) {
-		i.w.WriteHeader(utils.ICAPServiceNotFoundCodeStr, nil, false)
+		i.w.WriteHeader(utils.ICAPServiceNotFoundCodeStr, nil, false, i.req)
 		err := errors.New("service doesn't exist")
 		logging.Logger.Error(err.Error())
 		return xICAPMetadata, err
@@ -74,7 +74,7 @@ func (i *ICAPRequest) RequestInitialization() (string, error) {
 	i.methodName = i.req.Method
 	if i.methodName != "options" {
 		if !i.isMethodAllowed(xICAPMetadata) {
-			i.w.WriteHeader(utils.MethodNotAllowedForServiceCodeStr, nil, false)
+			i.w.WriteHeader(utils.MethodNotAllowedForServiceCodeStr, nil, false, i.req)
 			err := errors.New("method is not allowed")
 			logging.Logger.Error(err.Error())
 			return xICAPMetadata, err
@@ -87,11 +87,11 @@ func (i *ICAPRequest) RequestInitialization() (string, error) {
 
 	//adding important headers to options ICAP response
 	requiredService := service.GetService(i.vendor, i.serviceName, i.methodName,
-		&http_message.HttpMsg{Request: i.req.Request, Response: i.req.Response}, xICAPMetadata)
+		&http_message.HttpMsg{Request: i.req.Request, Response: i.req.Response, StorageClient: i.req.StorageClient, StorageKey: i.req.StorageKey}, xICAPMetadata)
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata, "adding ISTAG Service Headers"))
 	i.addingISTAGServiceHeaders(requiredService.ISTagValue())
 
-	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata, "checking if returning 24 to ICAP client is allowed or not"))
+	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata, "checking if returning 204 to ICAP client is allowed or not"))
 	i.Is204Allowed = i.is204Allowed(xICAPMetadata)
 
 	i.isShadowServiceEnabled = config.AppCfg.ServicesInstances[i.serviceName].ShadowService
@@ -121,15 +121,18 @@ func (i *ICAPRequest) RequestProcessing(xICAPMetadata string) {
 		"processing ICAP request upon the service and method required"))
 	partial := false
 	if i.methodName != utils.ICAPModeOptions {
-		file := &bytes.Buffer{}
-		fileLen := 0
+		var fileLen int64 = 0
 
 		if i.methodName == utils.ICAPModeResp {
-			io.Copy(file, i.req.Response.Body)
-			fileLen = file.Len()
-			i.req.Response.Header.Set(utils.ContentLength, strconv.Itoa(len(file.Bytes())))
-			i.req.Response.Body = io.NopCloser(bytes.NewBuffer(file.Bytes()))
+			fileStorLen, err := i.req.StorageClient.Size(i.req.StorageKey)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			fileLen = fileStorLen
 
+			i.req.Response.Header.Set(utils.ContentLength, strconv.FormatInt(fileLen, 10))
+			//i.req.Response.Body = io.NopCloser(bytes.NewBuffer(file.Bytes()))
 		} else {
 			if i.req.Method == utils.ICAPModeReq {
 
@@ -140,7 +143,7 @@ func (i *ICAPRequest) RequestProcessing(xICAPMetadata string) {
 				} else {
 					i.req.OrgRequest = new
 				}
-				body, _ := ioutil.ReadAll(i.req.Request.Body)
+				body, _ := io.ReadAll(i.req.Request.Body)
 				i.req.OrgRequest.Body = io.NopCloser(bytes.NewBuffer(body))
 				i.req.OrgRequest.Header = i.req.Request.Header
 				i.req.OrgRequest.Header.Set(utils.ContentLength, strconv.Itoa(len(body)))
@@ -201,13 +204,6 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 		defer i.req.Request.Body.Close()
 		defer i.req.OrgRequest.Body.Close()
 
-	} else {
-		defer i.req.Response.Body.Close()
-		//someString := "hello world nand hello go and more"
-		//r := strings.NewReader(someString)
-
-		//defer Original_rsp.Body.Close()
-
 	}
 	if i.req.Request == nil {
 		i.req.Request = &http.Request{}
@@ -216,7 +212,7 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 		"initialize the service by creating instance from the required service"))
 	requiredService := service.GetService(i.vendor, i.serviceName, i.methodName,
-		&http_message.HttpMsg{Request: i.req.Request, Response: i.req.Response}, xICAPMetadata)
+		&http_message.HttpMsg{Request: i.req.Request, Response: i.req.Response, StorageClient: i.req.StorageClient, StorageKey: i.req.StorageKey}, xICAPMetadata)
 
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 		"calling Processing func to process the http message which encapsulated inside the ICAP request"))
@@ -227,6 +223,9 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 	//icap.Request.Response
 	IcapStatusCode, httpMsg, serviceHeaders, httpMshHeadersBeforeProcessing, httpMshHeadersAfterProcessing,
 		vendorMsgs := requiredService.Processing(partial, i.req.Header)
+	if i.methodName == utils.ICAPModeResp {
+		defer i.req.StorageClient.Delete(i.req.StorageKey) // Delete the file in the tmp directory after processing(useful when error happens)
+	}
 
 	// adding the headers which the service wants to add them in the ICAP response
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
@@ -252,7 +251,7 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 	case utils.InternalServerErrStatusCodeStr:
 		logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 			i.serviceName+" returned ICAP response with status code "+strconv.Itoa(utils.InternalServerErrStatusCodeStr)))
-		i.w.WriteHeader(IcapStatusCode, nil, false)
+		i.w.WriteHeader(IcapStatusCode, nil, false, i.req)
 	case utils.Continue:
 		logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 			i.serviceName+" returned ICAP response with status code "+strconv.Itoa(utils.Continue)))
@@ -264,7 +263,8 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 			i.req.Request.Body = io.NopCloser(bytes.NewBuffer(httpMsgBody.Bytes()))
 			i.req.OrgRequest.Body = io.NopCloser(bytes.NewBuffer(httpMsgBody.Bytes()))
 		} else {
-			i.req.Response.Body = io.NopCloser(bytes.NewBuffer(httpMsgBody.Bytes()))
+			// i.req.Response.Body = io.NopCloser(bytes.NewBuffer(httpMsgBody.Bytes()))
+			// i.req.StorageClient.Save(i.req.StorageKey, httpMsgBody.Bytes())
 		}
 		i.allHeaders(IcapStatusCode, httpMshHeadersBeforeProcessing, httpMshHeadersAfterProcessing, vendorMsgs,
 			xICAPMetadata)
@@ -272,25 +272,25 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 	case utils.RequestTimeOutStatusCodeStr:
 		logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 			i.serviceName+" returned ICAP response with status code "+strconv.Itoa(utils.RequestTimeOutStatusCodeStr)))
-		i.w.WriteHeader(IcapStatusCode, nil, false)
+		i.w.WriteHeader(IcapStatusCode, nil, false, i.req)
 	case utils.NoModificationStatusCodeStr:
 		logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 			i.serviceName+" returned ICAP response with status code "+strconv.Itoa(utils.NoModificationStatusCodeStr)))
 		if i.Is204Allowed {
-			i.w.WriteHeader(utils.NoModificationStatusCodeStr, nil, false)
+			i.w.WriteHeader(utils.NoModificationStatusCodeStr, nil, false, i.req)
 		} else {
 
 			IcapStatusCode = utils.OkStatusCodeStr
 			if i.methodName == utils.ICAPModeReq {
 				IcapStatusCode = utils.OkStatusCodeStr
-				body, _ := ioutil.ReadAll(i.req.OrgRequest.Body)
+				body, _ := io.ReadAll(i.req.OrgRequest.Body)
 				i.req.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 				i.req.Request.Header.Set(utils.ContentLength, strconv.Itoa(len(body)))
 				defer i.req.Request.Body.Close()
-				i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Request, true)
+				i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Request, true, i.req)
 			} else {
 				IcapStatusCode = utils.OkStatusCodeStr
-				i.w.WriteHeader(utils.OkStatusCodeStr, httpMsg, true)
+				i.w.WriteHeader(utils.OkStatusCodeStr, httpMsg, true, i.req)
 			}
 
 			//i.w.WriteHeader(utils.OkStatusCodeStr, httpMsg, true)
@@ -298,11 +298,11 @@ func (i *ICAPRequest) RespAndReqMods(partial bool, xICAPMetadata string) {
 	case utils.OkStatusCodeStr:
 		logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 			i.serviceName+" returned ICAP response with status code "+strconv.Itoa(utils.OkStatusCodeStr)))
-		i.w.WriteHeader(utils.OkStatusCodeStr, httpMsg, true)
+		i.w.WriteHeader(utils.OkStatusCodeStr, httpMsg, true, i.req)
 	case utils.BadRequestStatusCodeStr:
 		logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 			i.serviceName+" returned ICAP response with status code "+strconv.Itoa(utils.BadRequestStatusCodeStr)))
-		i.w.WriteHeader(IcapStatusCode, httpMsg, true)
+		i.w.WriteHeader(IcapStatusCode, httpMsg, true, i.req)
 	}
 	i.allHeaders(IcapStatusCode, httpMshHeadersBeforeProcessing, httpMshHeadersAfterProcessing, vendorMsgs, xICAPMetadata)
 }
@@ -434,18 +434,18 @@ func (i *ICAPRequest) shadowService(xICAPMetadata string) {
 		i.h["X-ICAPeg-Shadow-Service"] = []string{"true"}
 	}
 	if i.Is204Allowed { // following RFC3507, if the request has Allow: 204 header, it is to be checked and if it doesn't exists, return the request as it is to the ICAP client, https://tools.ietf.org/html/rfc3507#section-4.6
-		i.w.WriteHeader(utils.NoModificationStatusCodeStr, nil, false)
+		i.w.WriteHeader(utils.NoModificationStatusCodeStr, nil, false, i.req)
 	} else {
 		if i.req.Method == "REQMOD" {
-			i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Request, true)
-			tempBody, _ := ioutil.ReadAll(i.req.Request.Body)
+			i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Request, true, i.req)
+			tempBody, _ := io.ReadAll(i.req.Request.Body)
 			i.w.Write(tempBody)
 			i.req.Request.Body = io.NopCloser(bytes.NewBuffer(tempBody))
 		} else if i.req.Method == "RESPMOD" {
-			i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Response, true)
-			tempBody, _ := ioutil.ReadAll(i.req.Response.Body)
+			i.w.WriteHeader(utils.OkStatusCodeStr, i.req.Response, true, i.req)
+			tempBody, _ := i.req.StorageClient.Load(i.req.StorageKey)
 			i.w.Write(tempBody)
-			i.req.Response.Body = io.NopCloser(bytes.NewBuffer(tempBody))
+			// i.req.Response.Body = io.NopCloser(bytes.NewBuffer(tempBody))
 		}
 	}
 }
@@ -486,7 +486,7 @@ func (i *ICAPRequest) optionsMode(serviceName, xICAPMetadata string) {
 		}
 	}
 	i.h.Set("Transfer-Preview", utils.Any)
-	i.w.WriteHeader(http.StatusOK, nil, false)
+	i.w.WriteHeader(http.StatusOK, nil, false, i.req)
 	i.optionsRespHeaders = i.LogICAPResHeaders(http.StatusOK)
 }
 
@@ -496,10 +496,19 @@ func (i *ICAPRequest) preview(xICAPMetadata string) *bytes.Buffer {
 	logging.Logger.Debug(utils.PrepareLogMsg(xICAPMetadata,
 		"getting the rest of the body from client after the service returned ICAP "+
 			"response with status code"+strconv.Itoa(utils.Continue)))
-	r := icap.GetTheRest()
-	c := io.NopCloser(r)
+	reader := i.req.GetTheRest()
+	readCloser := io.NopCloser(reader)
+	defer readCloser.Close()
+	if i.req.Method == utils.ICAPModeResp {
+		err := i.req.StorageClient.AppendFromReader(i.req.StorageKey, readCloser)
+		if err != nil {
+			log.Println(err)
+		}
+		return nil
+	}
+
 	buf := new(bytes.Buffer)
-	buf.ReadFrom(c)
+	buf.ReadFrom(readCloser)
 	return buf
 }
 

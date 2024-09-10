@@ -52,7 +52,7 @@ func (w *bridgedRespWriter) WriteHeader(code int) {
 	resp.StatusCode = code
 	resp.Header = w.header
 
-	w.irw.WriteHeader(200, resp, true)
+	w.irw.WriteHeader(200, resp, true, nil)
 }
 
 // NewBridgedResponseWriter Create an http.ResponseWriter that encapsulates its response in an ICAP response.

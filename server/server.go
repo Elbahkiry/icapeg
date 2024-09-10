@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"icapeg/api"
 	"icapeg/config"
 	"icapeg/icap"
+
+	"go.uber.org/zap"
 )
 
 // https://github.com/k8-proxy/k8-rebuild-rest-api
@@ -46,7 +49,31 @@ func StartServer() error {
 			logging.Logger.Fatal(err.Error())
 		}
 	}()
+	// This block to remove the contents in tmp dir at the start of the project and if it doesn't exist create one
+	dirPath := config.App().WritePathOnDisk
 
+	// Check if the directory exists, create if it doesn't
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		err := os.MkdirAll(dirPath, os.ModePerm)
+		if err != nil {
+			logging.Logger.Fatal("Failed to create directory", zap.Error(err))
+		}
+	}
+	// Read the directory contents
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		logging.Logger.Fatal("Failed to read directory", zap.Error(err))
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() { // Skip directories
+			err = os.Remove(filepath.Join(dirPath, entry.Name()))
+			if err != nil {
+				logging.Logger.Fatal(err.Error())
+			}
+		}
+	}
+	// The block ends here
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		for {

@@ -9,216 +9,279 @@ import (
 	"fmt"
 	utils "icapeg/consts"
 	"icapeg/logging"
+	"icapeg/service/services-utilities/ContentTypes"
 	"io"
 	"net/http"
 	"net/textproto"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// Processing is a func used for to processing the http message
-func (h *Hashlookup) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, interface{}, map[string]string, map[string]interface{},
-	map[string]interface{}, map[string]interface{}) {
-	serviceHeaders := make(map[string]string)
-	serviceHeaders["X-ICAP-Metadata"] = h.xICAPMetadata
-	logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has started processing"))
-	msgHeadersBeforeProcessing := h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-	msgHeadersAfterProcessing := make(map[string]interface{})
-	vendorMsgs := make(map[string]interface{})
-	h.IcapHeaders = IcapHeader
-	h.IcapHeaders.Add("X-ICAP-Metadata", h.xICAPMetadata)
-	// no need to scan part of the file, this service needs all the file at ine time
+func (d *Hashlookup) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	d.initProcessing(IcapHeader)
+
 	if partial {
-		logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata,
-			h.serviceName+" service has stopped processing partially"))
-		return utils.Continue, nil, nil,
-			msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
+		return d.handlePartialProcessing()
 	}
-	if h.methodName == utils.ICAPModeResp {
-		if h.httpMsg.Response != nil {
-			if h.httpMsg.Response.StatusCode == 206 {
-				logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing byte range received"))
-				return utils.NoModificationStatusCodeStr, h.httpMsg, serviceHeaders,
-					msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-			}
-		}
-	}
-	isGzip := false
-	ExceptionPagePath := utils.BlockPagePath
 
-	if h.ExceptionPage != "" {
-		ExceptionPagePath = h.ExceptionPage
-	}
-	//extracting the file from http message
-
-	file, reqContentType, err := h.generalFunc.CopyingFileToTheBuffer(h.methodName)
-
+	file, reqContentType, err := d.extractFile()
 	if err != nil {
-		logging.Logger.Error(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" error: "+err.Error()))
-		logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-		return utils.InternalServerErrStatusCodeStr, nil, serviceHeaders,
-			msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
+		return d.handleError(utils.InternalServerErrStatusCodeStr, err)
 	}
 
-	//if the http method is Connect, return the request as it is because it has no body
-	if h.methodName == utils.ICAPModeReq {
-		if h.httpMsg.Request.Method == http.MethodConnect {
-			return utils.OkStatusCodeStr, h.generalFunc.ReturningHttpMessageWithFile(h.methodName, file.Bytes()),
-				serviceHeaders, msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-		}
+	if d.methodName == utils.ICAPModeReq && d.httpMsg.Request.Method == http.MethodConnect {
+		return d.handleConnectMethod(file)
 	}
 
-	//getting the extension of the file
-	var contentType []string
-
-	var fileName string
-	if h.methodName == utils.ICAPModeReq {
-		contentType = h.httpMsg.Request.Header["Content-Type"]
-		fileName = h.generalFunc.GetFileName(h.serviceName, h.xICAPMetadata)
+	fileName, contentType := d.getFileNameAndContentType()
+	fileSize := d.getFileSize(file)
+	/////////////////////////
+	ExceptionPagePath := utils.BlockPagePath
+	// fileExtension := d.generalFunc.GetMimeExtension(file, contentType[0], fileName)
+	var fileExtension string
+	filehead, err := d.httpMsg.StorageClient.ReadFileHeader(d.httpMsg.StorageKey)
+	if err != nil {
+		// Handle the error by extracting the file extension from the filename
+		logging.Logger.Warn(utils.PrepareLogMsg(d.xICAPMetadata,
+			"failed to read file header, falling back to file extension from filename: "+err.Error()))
+		fileExtension = filepath.Ext(fileName)[1:]
 	} else {
-		contentType = h.httpMsg.Response.Header["Content-Type"]
-		fileName = h.generalFunc.GetFileName(h.serviceName, h.xICAPMetadata)
+		// Determine the file extension using the header data
+		fileExtension = d.generalFunc.GetMimeExtension(filehead, contentType[0], fileName)
+	}
+	d.FileHash, err = d.calculateFileHash(file)
+	if err != nil {
+		logging.Logger.Error(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" calculateFileHash error : "+err.Error()))
+	}
+	/////////////////////////////////
+	isProcess, _, _ := d.generalFunc.CheckTheExtension(fileExtension, d.extArrs,
+		d.processExts, d.rejectExts, d.bypassExts, d.return400IfFileExtRejected, d.isGzip(),
+		d.serviceName, d.methodName, d.FileHash, d.httpMsg.Request.RequestURI, reqContentType, bytes.NewBuffer(file), ExceptionPagePath, fmt.Sprint(fileSize))
+
+	///////////////////////////////////
+
+	if d.isMaxFileSizeExceeded(fileSize) {
+		return d.handleMaxFileSizeExceeded(bytes.NewBuffer(file), fileSize, reqContentType)
+	}
+
+	if fileSize == 0 {
+		return d.handleEmptyFile(file)
+	}
+
+	isMal, err := d.sendFileToScan(d.FileHash, isProcess)
+	if err != nil {
+		return d.handleScanningError(err, file)
+	}
+
+	if isMal {
+		return d.handleMaliciousFile(fileSize)
+	}
+	return d.handleSuccessfulScan(file, fileSize, reqContentType)
+}
+
+func (d *Hashlookup) initProcessing(IcapHeader textproto.MIMEHeader) {
+	d.serviceHeaders = map[string]string{"X-ICAP-Metadata": d.xICAPMetadata}
+	d.msgHeadersBeforeProcessing = d.generalFunc.LogHTTPMsgHeaders(d.methodName)
+	d.msgHeadersAfterProcessing = make(map[string]interface{})
+	d.vendorMsgs = make(map[string]interface{})
+	d.IcapHeaders = IcapHeader
+	d.IcapHeaders.Add("X-ICAP-Metadata", d.xICAPMetadata)
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has started processing"))
+}
+
+func (d *Hashlookup) handlePartialProcessing() (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has stopped processing partially"))
+	return utils.Continue, nil, nil, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
+
+func (d *Hashlookup) extractFile() ([]byte, ContentTypes.ContentType, error) {
+	file, reqContentType, err := d.generalFunc.CopyingFileToTheBuffer(d.methodName)
+	if err != nil {
+		logging.Logger.Error(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" error: "+err.Error()))
+		logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has stopped processing"))
+	}
+	return file, reqContentType, err
+}
+
+func (d *Hashlookup) handleError(status int, err error) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	logging.Logger.Error(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" error: "+err.Error()))
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has stopped processing"))
+	return status, nil, d.serviceHeaders, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
+
+func (d *Hashlookup) handleConnectMethod(file []byte) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	return utils.OkStatusCodeStr, d.generalFunc.ReturningHttpMessageWithFile(d.methodName, file), d.serviceHeaders, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
+
+func (d *Hashlookup) getFileNameAndContentType() (string, []string) {
+	var contentType []string
+	var fileName string
+	if d.methodName == utils.ICAPModeReq {
+		contentType = d.httpMsg.Request.Header["Content-Type"]
+		fileName = d.generalFunc.GetFileName(d.serviceName, d.xICAPMetadata)
+	} else {
+		contentType = d.httpMsg.Response.Header["Content-Type"]
+		fileName = d.generalFunc.GetFileName(d.serviceName, d.xICAPMetadata)
 	}
 	if len(contentType) == 0 {
 		contentType = append(contentType, "")
 	}
-
-	logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" file name : "+fileName))
-
-	fileExtension := h.generalFunc.GetMimeExtension(file.Bytes(), contentType[0], fileName)
-	//check if the file extension is a bypass extension
-	//if yes we will not modify the file, and we will return 204 No modifications
-
-	hash := sha256.New()
-	f := file
-	_, err = hash.Write(f.Bytes())
-	if err != nil {
-		fmt.Println(err.Error())
+	if filepath.Ext(fileName) == "" {
+		fileName += "." + utils.Unknown
 	}
-	fileSize := fmt.Sprintf("%v", file.Len())
-	fileHash := hex.EncodeToString(hash.Sum([]byte(nil)))
-	logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" file hash : "+fileHash))
-
-	//check if the file extension is a bypass extension
-	//if yes we will not modify the file, and we will return 204 No modifications
-	isProcess, icapStatus, httpMsg := h.generalFunc.CheckTheExtension(fileExtension, h.extArrs,
-		h.processExts, h.rejectExts, h.bypassExts, h.return400IfFileExtRejected, isGzip,
-		h.serviceName, h.methodName, fileHash, h.httpMsg.Request.RequestURI, reqContentType, file, ExceptionPagePath, fileSize)
-	if !isProcess {
-		logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-		msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-		return icapStatus, httpMsg, serviceHeaders,
-			msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
+	if filepath.Ext(fileName) == "." {
+		fileName += utils.Unknown
 	}
-	//check if the file size is greater than max file size of the service
-	//if yes we will return 200 ok or 204 no modification, it depends on the configuration of the service
-	if h.maxFileSize != 0 && h.maxFileSize < file.Len() {
-		status, file, httpMsg := h.generalFunc.IfMaxFileSizeExc(h.returnOrigIfMaxSizeExc, h.serviceName, h.methodName, file, h.maxFileSize, ExceptionPagePath, fileSize)
-		fileAfterPrep, httpMsg := h.generalFunc.IfStatusIs204WithFile(h.methodName, status, file, isGzip, reqContentType, httpMsg, true)
-		if fileAfterPrep == nil && httpMsg == nil {
-			logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-			return utils.InternalServerErrStatusCodeStr, nil, serviceHeaders,
-				msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" file name : "+fileName))
+	return fileName, contentType
+}
+
+func (d *Hashlookup) getFileSize(file []byte) int {
+	if d.methodName == utils.ICAPModeResp {
+		size, _ := d.httpMsg.StorageClient.Size(d.httpMsg.StorageKey)
+		return int(size)
+	}
+	return len(file)
+}
+
+func (d *Hashlookup) isMaxFileSizeExceeded(fileSize int) bool {
+	return d.maxFileSize != 0 && d.maxFileSize < fileSize
+}
+
+func (d *Hashlookup) handleMaxFileSizeExceeded(file *bytes.Buffer, fileSize int, reqContentType ContentTypes.ContentType) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	status, file, httpMsg := d.generalFunc.IfMaxFileSizeExc(d.returnOrigIfMaxSizeExc, d.serviceName, d.methodName, file, d.maxFileSize, d.ExceptionPagePath(), fmt.Sprint(fileSize))
+	fileAfterPrep, httpMsg := d.generalFunc.IfStatusIs204WithFile(d.methodName, status, file, d.isGzip(), reqContentType, httpMsg, true)
+	if fileAfterPrep == nil && httpMsg == nil {
+		return d.handleError(utils.InternalServerErrStatusCodeStr, fmt.Errorf("fileAfterPrep bytes is null"))
+	}
+	return d.prepareHttpResponse(status, httpMsg, fileAfterPrep)
+}
+
+func (d *Hashlookup) handleEmptyFile(file []byte) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has stopped processing zero file length"))
+	return utils.NoModificationStatusCodeStr, d.generalFunc.ReturningHttpMessageWithFile(d.methodName, file), d.serviceHeaders, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
+
+func (d *Hashlookup) handleScanningError(err error, file []byte) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	logging.Logger.Error(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" error: "+err.Error()))
+	if !d.BypassOnApiError {
+		if strings.Contains(err.Error(), "context deadline exceeded") {
+			return d.handleError(utils.RequestTimeOutStatusCodeStr, err)
 		}
+		return d.handleError(utils.BadRequestStatusCodeStr, err)
+	}
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" BypassOnApiError true"))
+	return utils.NoModificationStatusCodeStr, d.generalFunc.ReturningHttpMessageWithFile(d.methodName, file), d.serviceHeaders, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
+
+func (d *Hashlookup) handleMaliciousFile(fileSize int) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	logging.Logger.Debug(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+": file is not safe"))
+	if d.methodName == utils.ICAPModeResp {
+		serviceHeadersStr := mapToString(d.serviceHeaders)
+		errPage := d.generalFunc.GenHtmlPage(d.ExceptionPagePath(), utils.ErrPageReasonFileIsNotSafe, d.serviceName, d.FileHash, d.httpMsg.Request.RequestURI, fmt.Sprint(fileSize), serviceHeadersStr)
+		d.httpMsg.Response = d.generalFunc.ErrPageResp(d.CaseBlockHttpResponseCode, errPage.Len())
+		d.saveErrorPageBody(errPage.Bytes())
+		return d.prepareHttpResponse(utils.OkStatusCodeStr, d.httpMsg.Response, nil)
+	} else {
+		htmlPage, req, err := d.generalFunc.ReqModErrPage(utils.ErrPageReasonFileIsNotSafe, d.serviceName, d.FileHash, fmt.Sprint(fileSize))
+		if err != nil {
+			return d.handleError(utils.InternalServerErrStatusCodeStr, err)
+		}
+		req.Body = io.NopCloser(htmlPage)
+		return d.prepareHttpResponse(utils.OkStatusCodeStr, req, nil)
+	}
+}
+
+func (d *Hashlookup) handleSuccessfulScan(scannedFile []byte, fileSize int, reqContentType ContentTypes.ContentType) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	// Log headers and processing stop
+	d.generalFunc.LogHTTPMsgHeaders(d.methodName)
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has stopped processing"))
+	d.msgHeadersAfterProcessing = d.generalFunc.LogHTTPMsgHeaders(d.methodName)
+
+	// Process the scanned file
+	scannedFile = d.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, d.methodName)
+
+	return utils.NoModificationStatusCodeStr, d.generalFunc.ReturningHttpMessageWithFile(d.methodName, scannedFile),
+		d.serviceHeaders, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
+
+func (d *Hashlookup) saveErrorPageBody(body []byte) {
+	if d.CaseBlockHttpBody {
+		d.httpMsg.StorageClient.Save(d.httpMsg.StorageKey, body)
+	} else {
+		var r []byte
+		d.httpMsg.StorageClient.Save(d.httpMsg.StorageKey, r)
+		delete(d.httpMsg.Response.Header, "Content-Type")
+		delete(d.httpMsg.Response.Header, "Content-Length")
+	}
+}
+func (d *Hashlookup) prepareHttpResponse(status int, httpMsg interface{}, fileAfterPrep []byte) (int, interface{}, map[string]string, map[string]interface{}, map[string]interface{}, map[string]interface{}) {
+	if httpMsg != nil {
 		switch msg := httpMsg.(type) {
 		case *http.Request:
-			msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
-			logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-			msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-			return status, msg, nil,
-				msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
+			if fileAfterPrep != nil {
+				msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
+			}
 		case *http.Response:
-			msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
-			msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-			logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-			return status, msg, nil,
-				msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-		}
-		msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-		return status, nil, nil,
-			msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-	}
-
-	scannedFile := file.Bytes()
-	isMal, err := h.sendFileToScan(file)
-	if err != nil && !h.BypassOnApiError {
-		logging.Logger.Error(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" error: "+err.Error()))
-		if strings.Contains(err.Error(), "context deadline exceeded") {
-			logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-			return utils.RequestTimeOutStatusCodeStr, nil, nil,
-				msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-		}
-		// its suppose to be InternalServerErrStatusCodeStr but need to be handled
-		logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-		return utils.BadRequestStatusCodeStr, nil, nil,
-			msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-	}
-
-	if isMal {
-		logging.Logger.Debug(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+": file is not safe"))
-		if h.methodName == utils.ICAPModeResp {
-
-			errPage := h.generalFunc.GenHtmlPage(ExceptionPagePath, utils.ErrPageReasonFileIsNotSafe, h.serviceName, h.FileHash, h.httpMsg.Request.RequestURI, fileSize, h.xICAPMetadata)
-
-			h.httpMsg.Response = h.generalFunc.ErrPageResp(h.CaseBlockHttpResponseCode, errPage.Len())
-			if h.CaseBlockHttpBody {
-				h.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(errPage.Bytes()))
-			} else {
-				var r []byte
-				h.httpMsg.Response.Body = io.NopCloser(bytes.NewBuffer(r))
-				delete(h.httpMsg.Response.Header, "Content-Type")
-				delete(h.httpMsg.Response.Header, "Content-Length")
+			if fileAfterPrep != nil {
+				msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
 			}
-			logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-			msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-			return utils.OkStatusCodeStr, h.httpMsg.Response, serviceHeaders,
-				msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-		} else {
-			htmlPage, req, err := h.generalFunc.ReqModErrPage(utils.ErrPageReasonFileIsNotSafe, h.serviceName, h.FileHash, fileSize)
-			if err != nil {
-				logging.Logger.Error(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" error: "+err.Error()))
-
-				return utils.InternalServerErrStatusCodeStr, nil, nil,
-					msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-			}
-			req.Body = io.NopCloser(htmlPage)
-			msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-			return utils.OkStatusCodeStr, req, serviceHeaders,
-				msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
 		}
 	}
+	d.msgHeadersAfterProcessing = d.generalFunc.LogHTTPMsgHeaders(d.methodName)
+	logging.Logger.Info(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" service has stopped processing"))
+	return status, httpMsg, d.serviceHeaders, d.msgHeadersBeforeProcessing, d.msgHeadersAfterProcessing, d.vendorMsgs
+}
 
-	//returning the scanned file if everything is ok
-	//scannedFile = h.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, h.methodName)
-	h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-	logging.Logger.Info(utils.PrepareLogMsg(h.xICAPMetadata, h.serviceName+" service has stopped processing"))
-	msgHeadersAfterProcessing = h.generalFunc.LogHTTPMsgHeaders(h.methodName)
-	// OkStatusCodeStr => NoModificationStatusCodeStr
-	/*
-		return utils.NoModificationStatusCodeStr,
-			h.generalFunc.ReturningHttpMessageWithFile(h.methodName, scannedFile), serviceHeaders,
-			msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
-		/*return utils.NoModificationStatusCodeStr, nil, serviceHeaders, msgHeadersBeforeProcessing,
-		msgHeadersAfterProcessing, vendorMsgs	*/
-	/*return utils.NoModificationStatusCodeStr,
-	h.ReturningHttpMessageWithFile(h.methodName, scannedFile, h.OriginalMsg), serviceHeaders,
-	msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs*/
-	scannedFile = h.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, h.methodName)
+func (d *Hashlookup) ExceptionPagePath() string {
+	if d.ExceptionPage != "" {
+		return d.ExceptionPage
+	}
+	return utils.BlockPagePath
+}
 
-	return utils.NoModificationStatusCodeStr, h.generalFunc.ReturningHttpMessageWithFile(h.methodName, scannedFile),
-		serviceHeaders, msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
+func (d *Hashlookup) isGzip() bool {
+	return false
+}
 
+// New function to calculate file hash without consuming memory
+func (d *Hashlookup) calculateFileHash(file []byte) (string, error) {
+	var fileHash string
+	if d.methodName == utils.ICAPModeReq || d.httpMsg.StorageClient == nil {
+
+		hash := sha256.New()
+		_, err := hash.Write(file)
+		if err != nil {
+			logging.Logger.Error(utils.PrepareLogMsg(d.xICAPMetadata, d.serviceName+" calculateFileHash error : "+err.Error()))
+
+		}
+		fileHash = hex.EncodeToString(hash.Sum([]byte(nil)))
+		return fileHash, nil
+	}
+
+	return d.httpMsg.StorageClient.ComputeHash(d.httpMsg.StorageKey)
+}
+
+func mapToString(m map[string]string) string {
+	var sb strings.Builder
+	for key, value := range m {
+		sb.WriteString(fmt.Sprintf("\r\n"))
+		sb.WriteString(fmt.Sprintf("%s: %s", key, value))
+	}
+	return sb.String()
 }
 
 // SendFileToScan is a function to send the file to API
-func (h *Hashlookup) sendFileToScan(f *bytes.Buffer) (bool, error) {
-	hash := sha256.New()
-	_, _ = io.Copy(hash, f)
-	fileHash := hex.EncodeToString(hash.Sum([]byte(nil)))
-	h.FileHash = fileHash
+func (h *Hashlookup) sendFileToScan(f string, isProcess bool) (bool, error) {
+
+	if !isProcess {
+		return false, nil
+	}
+	h.FileHash = f
 	//var jsonStr = []byte(`{"hash":"` + fileHash + `"}`)
-	req, err := http.NewRequest("GET", h.ScanUrl+fileHash, nil)
+	req, err := http.NewRequest("GET", h.ScanUrl+h.FileHash, nil)
 	client := &http.Client{}
 	ctx, cancel := context.WithTimeout(context.Background(), h.Timeout)
 	defer cancel()
