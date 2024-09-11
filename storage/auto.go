@@ -261,7 +261,7 @@ func (as *AutoStorage) ReplaceAndDelete(keyFrom, keyTo string) error {
 // ReadFileHeader reads the first 262 bytes of the file identified by the given key.
 // If the file is smaller than 262 bytes, it reads the entire file.
 func (as *AutoStorage) ReadFileHeader(key string) ([]byte, error) {
-	const maxHeaderSize = 262 // Maximum file header size to read
+	const maxHeaderSize = 2048 // Maximum file header size to read
 
 	var header []byte
 	var err error
