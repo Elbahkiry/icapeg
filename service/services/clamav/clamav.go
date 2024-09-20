@@ -100,7 +100,7 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 	isProcess, icapStatus, httpMsg := c.generalFunc.CheckTheExtension(fileExtension, c.extArrs,
 		c.processExts, c.rejectExts, c.bypassExts, c.return400IfFileExtRejected, isGzip,
 		c.serviceName, c.methodName, fileHash, c.httpMsg.Request.RequestURI, reqContentType, bytes.NewBuffer(file), ExceptionPagePath, fileSize)
-	if !isProcess {
+	if !isProcess && c.methodName == utils.ICAPModeReq {
 		logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
 		msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
 		return icapStatus, httpMsg, serviceHeaders,
@@ -109,7 +109,7 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 
 	//check if the file size is greater than max file size of the service
 	//if yes we will return 200 ok or 204 no modification, it depends on the configuration of the service
-	if c.maxFileSize != 0 && c.maxFileSize < len(file) {
+	if c.maxFileSize != 0 && c.maxFileSize < len(file) && isProcess {
 		status, file, httpMsg := c.generalFunc.IfMaxFileSizeExc(c.returnOrigIfMaxSizeExc, c.serviceName, c.methodName, bytes.NewBuffer(file), c.maxFileSize, ExceptionPagePath, fileSize)
 		fileAfterPrep, httpMsg := c.generalFunc.IfStatusIs204WithFile(c.methodName, status, file, isGzip, reqContentType, httpMsg, true)
 		if fileAfterPrep == nil && httpMsg == nil {
@@ -207,34 +207,44 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 		}
 	}
 	//returning the scanned file if everything is ok
-	fileAfterPrep, httpMsg := c.generalFunc.IfICAPStatusIs204(c.methodName, utils.NoModificationStatusCodeStr,
-		bytes.NewBuffer(file), false, reqContentType, c.httpMsg)
-	if fileAfterPrep == nil && httpMsg == nil {
-		logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
-		return utils.InternalServerErrStatusCodeStr, nil, nil, msgHeadersBeforeProcessing,
-			msgHeadersAfterProcessing, vendorMsgs
-	}
+	// fileAfterPrep, httpMsg := c.generalFunc.IfICAPStatusIs204(c.methodName, utils.NoModificationStatusCodeStr,
+	// 	bytes.NewBuffer(file), false, reqContentType, c.httpMsg)
+	// if fileAfterPrep == nil && httpMsg == nil {
+	// 	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
+	// 	return utils.InternalServerErrStatusCodeStr, nil, nil, msgHeadersBeforeProcessing,
+	// 		msgHeadersAfterProcessing, vendorMsgs
+	// }
 
-	//returning the http message and the ICAP status code
-	switch msg := httpMsg.(type) {
-	case *http.Request:
-		msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
-		logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
-		msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
-		return utils.NoModificationStatusCodeStr, msg, serviceHeaders, msgHeadersBeforeProcessing,
-			msgHeadersAfterProcessing, vendorMsgs
-	case *http.Response:
-		msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
-		logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
-		msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
-		return utils.NoModificationStatusCodeStr, msg, serviceHeaders, msgHeadersBeforeProcessing,
-			msgHeadersAfterProcessing, vendorMsgs
-	}
-	c.generalFunc.LogHTTPMsgHeaders(c.methodName)
-	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
+	// //returning the http message and the ICAP status code
+	// switch msg := httpMsg.(type) {
+	// case *http.Request:
+	// 	msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
+	// 	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
+	// 	msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
+	// 	return utils.NoModificationStatusCodeStr, msg, serviceHeaders, msgHeadersBeforeProcessing,
+	// 		msgHeadersAfterProcessing, vendorMsgs
+	// case *http.Response:
+	// 	msg.Body = io.NopCloser(bytes.NewBuffer(fileAfterPrep))
+	// 	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
+	// 	msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
+	// 	return utils.NoModificationStatusCodeStr, msg, serviceHeaders, msgHeadersBeforeProcessing,
+	// 		msgHeadersAfterProcessing, vendorMsgs
+	// }
+	// c.generalFunc.LogHTTPMsgHeaders(c.methodName)
+	// logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
+	// msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
+	// return utils.NoModificationStatusCodeStr, nil, serviceHeaders, msgHeadersBeforeProcessing,
+	// 	msgHeadersAfterProcessing, vendorMsgs
+	scannedFile := file
+
+	// Prepare the scanned file
+	scannedFile = c.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, c.methodName)
+
 	msgHeadersAfterProcessing = c.generalFunc.LogHTTPMsgHeaders(c.methodName)
-	return utils.NoModificationStatusCodeStr, nil, serviceHeaders, msgHeadersBeforeProcessing,
-		msgHeadersAfterProcessing, vendorMsgs
+	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
+
+	return utils.OkStatusCodeStr, c.generalFunc.ReturningHttpMessageWithFile(c.methodName, scannedFile),
+		serviceHeaders, msgHeadersBeforeProcessing, msgHeadersAfterProcessing, vendorMsgs
 }
 
 func (c *Clamav) ISTagValue() string {
