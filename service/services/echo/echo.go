@@ -111,11 +111,9 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 	}
 
 	scannedFile := file
-	fmt.Println(len(scannedFile))
 
 	//returning the scanned file if everything is ok
 	scannedFile = e.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, e.methodName)
-	fmt.Println(len(scannedFile))
 
 	msgHeadersAfterProcessing = e.generalFunc.LogHTTPMsgHeaders(e.methodName)
 	logging.Logger.Info(utils.PrepareLogMsg(e.xICAPMetadata, e.serviceName+" service has stopped processing"))
