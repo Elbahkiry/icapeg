@@ -94,7 +94,14 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 	if err != nil {
 		fmt.Println(err.Error())
 	}
-	fileSize := fmt.Sprintf("%v", len(file))
+	var size int
+	if c.methodName == utils.ICAPModeResp {
+		size64, _ := c.httpMsg.StorageClient.Size(c.httpMsg.StorageKey)
+		size = int(size64) // Convert int64 to int
+	} else {
+		size = len(file)
+	}
+	fileSize := fmt.Sprintf("%v", size)
 	fileHash := hex.EncodeToString(hash.Sum([]byte(nil)))
 	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" file hash : "+fileHash))
 	isProcess, icapStatus, httpMsg := c.generalFunc.CheckTheExtension(fileExtension, c.extArrs,
@@ -109,7 +116,7 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 
 	//check if the file size is greater than max file size of the service
 	//if yes we will return 200 ok or 204 no modification, it depends on the configuration of the service
-	if c.maxFileSize != 0 && c.maxFileSize < len(file) && isProcess {
+	if c.maxFileSize != 0 && c.maxFileSize < size && isProcess {
 		status, file, httpMsg := c.generalFunc.IfMaxFileSizeExc(c.returnOrigIfMaxSizeExc, c.serviceName, c.methodName, bytes.NewBuffer(file), c.maxFileSize, ExceptionPagePath, fileSize)
 		fileAfterPrep, httpMsg := c.generalFunc.IfStatusIs204WithFile(c.methodName, status, file, isGzip, reqContentType, httpMsg, true)
 		if fileAfterPrep == nil && httpMsg == nil {

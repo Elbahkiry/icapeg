@@ -76,10 +76,16 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 		return icapStatus, httpMsg, serviceHeaders, msgHeadersBeforeProcessing,
 			msgHeadersAfterProcessing, vendorMsgs
 	}
-
+	var size int
+	if e.methodName == utils.ICAPModeResp {
+		size64, _ := e.httpMsg.StorageClient.Size(e.httpMsg.StorageKey)
+		size = int(size64) // Convert int64 to int
+	} else {
+		size = len(file)
+	}
 	//check if the file size is greater than max file size of the service
 	//if yes we will return 200 ok or 204 no modification, it depends on the configuration of the service
-	if e.maxFileSize != 0 && e.maxFileSize < len(file) && isProcess {
+	if e.maxFileSize != 0 && e.maxFileSize < size && isProcess {
 		status, file, httpMsgAfter := e.generalFunc.IfMaxFileSizeExc(e.returnOrigIfMaxSizeExc, e.serviceName, e.methodName, bytes.NewBuffer(file), e.maxFileSize, utils.BlockPagePath, fileSize)
 		fileAfterPrep, httpMsgAfter := e.generalFunc.IfStatusIs204WithFile(e.methodName, status, file, isGzip, reqContentType, httpMsgAfter, true)
 		if fileAfterPrep == nil && httpMsgAfter == nil {
@@ -105,9 +111,12 @@ func (e *Echo) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int, i
 	}
 
 	scannedFile := file
+	fmt.Println(len(scannedFile))
 
 	//returning the scanned file if everything is ok
 	scannedFile = e.generalFunc.PreparingFileAfterScanning(scannedFile, reqContentType, e.methodName)
+	fmt.Println(len(scannedFile))
+
 	msgHeadersAfterProcessing = e.generalFunc.LogHTTPMsgHeaders(e.methodName)
 	logging.Logger.Info(utils.PrepareLogMsg(e.xICAPMetadata, e.serviceName+" service has stopped processing"))
 	return utils.OkStatusCodeStr, e.generalFunc.ReturningHttpMessageWithFile(e.methodName, scannedFile),
