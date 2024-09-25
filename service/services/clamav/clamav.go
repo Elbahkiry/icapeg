@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/textproto"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -83,9 +84,22 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 	}
 
 	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" file name : "+fileName))
-
-	fileExtension := c.generalFunc.GetMimeExtension(file, contentType[0], fileName)
-
+	// Read the extension of the file properly
+	var fileExtension string
+	if c.methodName == utils.ICAPModeReq {
+		fileExtension = c.generalFunc.GetMimeExtension(file, contentType[0], fileName)
+	} else {
+		filehead, err := c.httpMsg.StorageClient.ReadFileHeader(c.httpMsg.StorageKey)
+		if err != nil {
+			// Handle the error by extracting the file extension from the filename
+			logging.Logger.Warn(utils.PrepareLogMsg(c.xICAPMetadata,
+				"failed to read file header, falling back to file extension from filename: "+err.Error()))
+			fileExtension = filepath.Ext(fileName)[1:]
+		} else {
+			// Determine the file extension using the header data
+			fileExtension = c.generalFunc.GetMimeExtension(filehead, contentType[0], fileName)
+		}
+	}
 	//check if the file extension is a bypass extension
 	//if yes we will not modify the file, and we will return 204 No modifications
 	hash := sha256.New()
