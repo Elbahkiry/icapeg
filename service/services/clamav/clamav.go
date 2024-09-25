@@ -103,6 +103,7 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 	}
 	fileSize := fmt.Sprintf("%v", size)
 	fileHash := hex.EncodeToString(hash.Sum([]byte(nil)))
+	c.FileHash = fileHash
 	logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" file hash : "+fileHash))
 	isProcess, icapStatus, httpMsg := c.generalFunc.CheckTheExtension(fileExtension, c.extArrs,
 		c.processExts, c.rejectExts, c.bypassExts, c.return400IfFileExtRejected, isGzip,
@@ -146,7 +147,17 @@ func (c *Clamav) Processing(partial bool, IcapHeader textproto.MIMEHeader) (int,
 	clmd := clamd.NewClamd(c.SocketPath)
 	logging.Logger.Debug(utils.PrepareLogMsg(c.xICAPMetadata,
 		"sending the HTTP msg body to the ClamAV through antivirus socket"))
-	response, err := clmd.ScanStream(bytes.NewReader(file), make(chan bool))
+
+	// Instead of loading the entire file into memory, handle it as a stream
+	var reader io.ReadCloser
+	if c.methodName == utils.ICAPModeResp && isProcess {
+		reader, _ = c.httpMsg.StorageClient.LoadAsReader(c.httpMsg.StorageKey) // Load as an io.Reader to scan in chunks
+	} else {
+		reader = io.NopCloser(bytes.NewReader(file)) // For smaller files already in memory
+	}
+	defer reader.Close() // Ensure the reader is closed after use
+
+	response, err := clmd.ScanStream(reader, make(chan bool))
 	if err != nil {
 		logging.Logger.Error(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" error: "+err.Error()))
 		logging.Logger.Info(utils.PrepareLogMsg(c.xICAPMetadata, c.serviceName+" service has stopped processing"))
